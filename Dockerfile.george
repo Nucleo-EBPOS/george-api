@@ -1,7 +1,7 @@
-# george-api — imagem multi-stage (Go 1.23 → alpine).
+# george-api — imagem multi-stage (Go 1.26 → alpine; mesma versão do go.mod e do CI).
 # Build: docker build -f Dockerfile.george -t ghcr.io/nucleo-ebpos/george-api:dev .
 
-FROM golang:1.23-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache git build-base
 COPY go.mod go.sum ./

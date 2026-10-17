@@ -13,6 +13,10 @@ comentário `// george:`.
 | `utils/password.go` | `EncryptPassword` → argon2id; `VerifyPassword` aceita argon2id, bcrypt e MD5 legado, devolvendo hash novo para migração transparente | Regra 5 da spec (argon2id) sem quebrar `/api/login` dos clientes RustDesk |
 | `cmd/george_import.go` (novo, mesmo pacote `main`) | subcomando `import-sqlite` registrado via `init()` | Importar o SQLite da produção atual sem editar `apimain.go` além do acima |
 
+**Go 1.26**: o `go` directive subiu de 1.23 → 1.26.0 com as dependências novas (SDK Anthropic,
+genproto/cloud.google.com). `Dockerfile.george` (`golang:1.26-alpine`) e o CI (`go-version-file: go.mod`)
+seguem o `go.mod`, então ficam sempre na mesma versão.
+
 `go.sum` é versionado com `git add -f` (o `.gitignore` do upstream o ignora; mantemos o
 `.gitignore` intacto). Builds do CI e da imagem ficam reproduzíveis; após `go get`, rode
 `go mod tidy` e commite o `go.sum` junto.
