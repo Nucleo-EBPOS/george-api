@@ -33,7 +33,7 @@ func TestOpenAPIDocumentIsValidAndComplete(t *testing.T) {
 		norm := p
 		for strings.Contains(norm, "{") {
 			i, j := strings.Index(norm, "{"), strings.Index(norm, "}")
-			norm = norm[:i] + "{}" + norm[j+1:]
+			norm = norm[:i] + "*" + norm[j+1:]
 		}
 		if prev, dup := seen[norm]; dup {
 			t.Errorf("templates equivalentes: %s e %s", prev, p)
