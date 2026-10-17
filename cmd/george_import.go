@@ -19,7 +19,9 @@ import (
 
 // importSqliteCmd copia o banco SQLite do rustdesk-api (produção atual) para o
 // Postgres configurado em GEORGE_DB_URL, criando uma org padrão para os dados
-// legados. Idempotente: linhas já existentes (mesmo id) são ignoradas.
+// legados. Idempotente: linhas com o mesmo id são sobrescritas pela origem
+// (inclusive o admin id=1 que o upstream semeia no primeiro boot do Postgres),
+// e as colunas do George (org_id, role, ...) não são tocadas no upsert.
 var importSqliteCmd = &cobra.Command{
 	Use:     "import-sqlite [arquivo.db] [nome-da-org]",
 	Example: "import-sqlite ./data/rustdeskapi.db \"George (legado)\"",
@@ -90,11 +92,11 @@ func importSqlite(src, dst *gorm.DB, orgName string) error {
 		if err := src.Table(t.name).Find(t.model).Error; err != nil {
 			return fmt.Errorf("%s: %w", t.name, err)
 		}
-		res := raw.Table(t.name).Omit(clause.Associations).Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(t.model, 200)
+		res := raw.Table(t.name).Omit(clause.Associations).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: t.pk}}, UpdateAll: true}).CreateInBatches(t.model, 200)
 		if res.Error != nil {
 			return fmt.Errorf("%s: %w", t.name, res.Error)
 		}
-		global.Logger.Infof("%-32s %d linhas inseridas", t.name, res.RowsAffected)
+		global.Logger.Infof("%-32s %d linhas copiadas", t.name, res.RowsAffected)
 		if err := raw.Exec(fmt.Sprintf(`SELECT setval(pg_get_serial_sequence('%s', '%s'), COALESCE((SELECT MAX(%s) FROM %s), 0) + 1, false)`,
 			t.name, t.pk, t.pk, t.name)).Error; err != nil {
 			return fmt.Errorf("sequence %s: %w", t.name, err)
