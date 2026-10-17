@@ -37,7 +37,7 @@ jobs:
           GEORGE_TEST_DB_URL: postgres://george:george@127.0.0.1:5433/george_test?sslmode=disable
         run: go test -p 1 -timeout 300s ./george/... -count=1 -v
       - name: build
-        run: go build ./cmd/...
+        run: go build -o /dev/null ./cmd/...
 
   image:
     needs: test
