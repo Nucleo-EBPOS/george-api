@@ -82,14 +82,25 @@ func (s *Svc) sessionFacts(sess *gm.Session) string {
 	s.DB.Where("row_id = ?", sess.DeviceID).First(dev)
 	dur := "em andamento"
 	if sess.EndedAt != nil {
-		dur = sess.EndedAt.Sub(sess.StartedAt).Round(time.Second).String()
+		d := sess.EndedAt.Sub(sess.StartedAt).Round(time.Second)
+		if d < 0 {
+			d = 0 // close_time do upstream tem resolução de segundos
+		}
+		dur = d.String()
+	}
+	so := dev.Os
+	if so == "" {
+		so = dev.Platform
+	}
+	if so == "" {
+		so = "desconhecido"
 	}
 	from := sess.FromName
 	if from == "" {
 		from = sess.FromPeer
 	}
 	return fmt.Sprintf("Sessão #%d. Dispositivo acessado: %s (ID %s, SO %s). Origem: %s (peer %s). Início: %s. Duração: %s. Tipo de conexão: %d. IP de origem: %s.",
-		sess.ID, dev.Name(), sess.PeerID, dev.Os, from, sess.FromPeer, sess.StartedAt.Format(time.RFC3339), dur, sess.ConnType, sess.IP)
+		sess.ID, dev.Name(), sess.PeerID, so, from, sess.FromPeer, sess.StartedAt.Format(time.RFC3339), dur, sess.ConnType, sess.IP)
 }
 
 // RegisterHooks liga callbacks do gorm para ingerir audit_conns → sessions
