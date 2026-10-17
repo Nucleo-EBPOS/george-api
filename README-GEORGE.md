@@ -105,3 +105,17 @@ de `audit_conns`. Idempotente.
 
 `Dockerfile.george` (multi-stage). CI em `.github/workflows/george.yml` roda vet/test
 (Postgres de serviço) e publica `ghcr.io/nucleo-ebpos/george-api:{latest,sha-…,vX.Y.Z}`.
+
+## Limitações conhecidas (F1)
+
+- **`/api/users` do cliente stock** lista só o próprio usuário para quem não é `is_admin`
+  do upstream (comportamento original). O `is_admin` do upstream é **global** (painel
+  `/_admin` de todas as orgs), por isso nenhum usuário George recebe essa flag; a lista de
+  membros da org fica em `GET /api/v1/org/users`.
+- **Painel `/_admin` e rotas `/api/admin/*` do upstream** continuam existindo e enxergam
+  todas as orgs. O usuário `admin` (id=1) semeado no primeiro boot deve ter a senha guardada
+  no cofre ou ser desativado; o ideal é bloquear `/_admin` e `/api/admin` no Caddy.
+- **E-mail**: sem SMTP, `POST /auth/forgot` só registra o link no log (job `email`).
+- **Rate-limit** é em memória (por instância); com mais de uma réplica, mover para Redis.
+- **IA**: sem `GEORGE_AI_KEY`, o resumo de sessão usa um texto factual (template) e a busca
+  natural usa heurística (`provider: "heuristic"`).
