@@ -1,0 +1,24 @@
+# george-api — imagem multi-stage (Go 1.23 → alpine).
+# Build: docker build -f Dockerfile.george -t ghcr.io/nucleo-ebpos/george-api:dev .
+
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git build-base
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -tags "sqlite_omit_load_extension" -o /out/apimain ./cmd
+
+FROM alpine:3.20
+WORKDIR /app
+RUN apk add --no-cache tzdata ca-certificates && adduser -D -u 10001 george
+COPY --from=build /out/apimain /app/apimain
+COPY conf/ /app/conf/
+COPY resources/ /app/resources/
+RUN mkdir -p /app/data /app/runtime && chown -R george:george /app
+USER george
+VOLUME ["/app/data"]
+EXPOSE 21114
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:21114/healthz || exit 1
+CMD ["./apimain"]
