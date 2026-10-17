@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	georgehttp "github.com/lejianwen/rustdesk-api/v2/george/httpapi"
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http/middleware"
 	"github.com/lejianwen/rustdesk-api/v2/http/router"
@@ -34,6 +35,8 @@ func ApiInit() {
 		c.String(http.StatusNotFound, "404 not found")
 	})
 	g.Use(middleware.Logger(), middleware.Limiter(), gin.Recovery())
+	// george: request_id, logs JSON, CORS, headers seguros e rotas /api/v1
+	georgehttp.Register(g, global.Logger)
 	router.WebInit(g)
 	router.Init(g)
 	router.ApiInit(g)

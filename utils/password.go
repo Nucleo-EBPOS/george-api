@@ -2,37 +2,41 @@ package utils
 
 import (
 	"errors"
+
+	"github.com/lejianwen/rustdesk-api/v2/george/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// EncryptPassword hashes the input password using bcrypt.
-// An error is returned if hashing fails.
+// EncryptPassword hashes the input password using argon2id (George).
+// Legacy bcrypt/MD5 hashes keep working in VerifyPassword and are re-hashed on login.
 func EncryptPassword(password string) (string, error) {
-	bs, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	return string(bs), nil
+	return auth.HashPassword(password)
 }
 
 // VerifyPassword checks the input password against the stored hash.
-// When a legacy MD5 hash is provided, the password is rehashed with bcrypt
-// and the new hash is returned. Any internal bcrypt error is returned.
+// Supports argon2id (current), bcrypt (upstream) and legacy MD5. When a
+// non-argon2id hash matches, a new argon2id hash is returned so the caller
+// can migrate the stored password transparently.
 func VerifyPassword(hash, input string) (bool, string, error) {
+	if auth.IsArgon2(hash) {
+		ok, err := auth.VerifyArgon2(hash, input)
+		return ok, "", err
+	}
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(input))
 	if err == nil {
-		return true, "", nil
+		newHash, err2 := auth.HashPassword(input)
+		return true, newHash, err2
 	}
 
 	var invalidPrefixErr bcrypt.InvalidHashPrefixError
 	if errors.As(err, &invalidPrefixErr) || errors.Is(err, bcrypt.ErrHashTooShort) {
 		// Try fallback to legacy MD5 hash verification
 		if hash == Md5(input+"rustdesk-api") {
-			newHash, err2 := bcrypt.GenerateFromPassword([]byte(input), bcrypt.DefaultCost)
+			newHash, err2 := auth.HashPassword(input)
 			if err2 != nil {
 				return true, "", err2
 			}
-			return true, string(newHash), nil
+			return true, newHash, nil
 		}
 	}
 	if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {

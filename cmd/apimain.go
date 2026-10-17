@@ -8,6 +8,8 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/lejianwen/rustdesk-api/v2/config"
+	"github.com/lejianwen/rustdesk-api/v2/george"
+	gconfig "github.com/lejianwen/rustdesk-api/v2/george/config"
 	"github.com/lejianwen/rustdesk-api/v2/global"
 	"github.com/lejianwen/rustdesk-api/v2/http"
 	"github.com/lejianwen/rustdesk-api/v2/lib/cache"
@@ -113,6 +115,9 @@ func main() {
 func InitGlobal() {
 	//配置解析
 	global.Viper = config.Init(&global.Config, global.ConfigPath)
+	// george: overrides por env GEORGE_* (Postgres, JWT, servidores RustDesk)
+	gconfig.Load()
+	gconfig.ApplyOverrides(&global.Config)
 
 	//日志
 	global.Logger = logger.New(&logger.Config{
@@ -211,6 +216,10 @@ func InitGlobal() {
 	})
 	global.LoginLimiter.RegisterProvider(utils.B64StringCaptchaProvider{})
 	DatabaseAutoUpdate()
+	// george: migrações numeradas, hooks e fila
+	if err := george.Init(global.DB, global.Logger); err != nil {
+		global.Logger.Fatal("george init: ", err)
+	}
 }
 
 func DatabaseAutoUpdate() {
