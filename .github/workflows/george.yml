@@ -32,10 +32,10 @@ jobs:
           cache: true
       - name: go vet
         run: go vet ./george/... ./cmd/...
-      - name: go test (regras: permissões, convites, host, isolamento)
+      - name: "go test (regras: permissões, convites, host, isolamento)"
         env:
           GEORGE_TEST_DB_URL: postgres://george:george@127.0.0.1:5433/george_test?sslmode=disable
-        run: go test ./george/... -count=1 -v
+        run: go test -p 1 -timeout 300s ./george/... -count=1 -v
       - name: build
         run: go build ./cmd/...
 
