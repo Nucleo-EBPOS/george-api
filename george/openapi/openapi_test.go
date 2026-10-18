@@ -21,7 +21,8 @@ func TestOpenAPIDocumentIsValidAndComplete(t *testing.T) {
 		"/devices/{id}/share/{shareId}", "/devices/heartbeat", "/devices/search", "/invites", "/invites/{code}", "/invites/{code}/consume",
 		"/groups", "/groups/{id}", "/groups/{id}/devices", "/sessions", "/sessions/{id}/summary", "/org", "/org/users", "/org/users/{id}",
 		"/org/audit", "/org/branding", "/org/sso", "/org/billing", "/org/billing/portal", "/webhooks/stripe", "/ops/orgs", "/ops/health",
-		"/healthz", "/releases/latest"}
+		"/healthz", "/releases/latest", "/enrollment-keys", "/enrollment-keys/{id}", "/enroll", "/agent/heartbeat",
+		"/devices/{id}/rotate-password", "/devices/{id}/revoke", "/devices/{id}/credentials"}
 	for _, p := range must {
 		if _, ok := paths[p]; !ok {
 			t.Errorf("rota ausente no OpenAPI: %s", p)

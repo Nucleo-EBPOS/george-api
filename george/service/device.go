@@ -15,13 +15,45 @@ import (
 // DeviceView é o dispositivo serializado para a API.
 type DeviceView struct {
 	gm.Device
-	Name   string           `json:"name"`
-	Online bool             `json:"online"`
-	Shares []gm.DeviceShare `json:"shares,omitempty"`
+	Name            string           `json:"name"`
+	Online          bool             `json:"online"`
+	Enrolled        bool             `json:"enrolled"`
+	Revoked         bool             `json:"revoked"`
+	PasswordApplied bool             `json:"password_applied"`
+	GroupName       string           `json:"group_name"`
+	Shares          []gm.DeviceShare `json:"shares,omitempty"`
 }
 
 func view(d gm.Device, shares []gm.DeviceShare) DeviceView {
-	return DeviceView{Device: d, Name: d.Name(), Online: d.Online(), Shares: shares}
+	return DeviceView{Device: d, Name: d.Name(), Online: d.Online(), Enrolled: d.Enrolled(), Revoked: d.Revoked(),
+		PasswordApplied: d.PasswordApplied(), Shares: shares}
+}
+
+// groupNames resolve group_name de um lote de dispositivos (uma query).
+func (s *Svc) groupNames(ids []uint) map[uint]string {
+	out := map[uint]string{}
+	want := []uint{}
+	for _, id := range ids {
+		if id != 0 {
+			want = append(want, id)
+		}
+	}
+	if len(want) == 0 {
+		return out
+	}
+	var rows []gm.DeviceGroup
+	s.DB.Where("id IN ?", want).Find(&rows)
+	for _, g := range rows {
+		out[g.ID] = g.Name
+	}
+	return out
+}
+
+// viewOf monta a visão de um dispositivo com o nome do setor.
+func (s *Svc) viewOf(d gm.Device, shares []gm.DeviceShare) DeviceView {
+	v := view(d, shares)
+	v.GroupName = s.groupNames([]uint{d.GroupID})[d.GroupID]
+	return v
 }
 
 // DeviceFilter filtra a listagem.
@@ -31,6 +63,7 @@ type DeviceFilter struct {
 	HostEnabled *bool
 	GroupID     *uint
 	Os          string
+	Enrolled    *bool
 }
 
 func (s *Svc) sharesOf(deviceID uint) []gm.DeviceShare {
@@ -40,7 +73,7 @@ func (s *Svc) sharesOf(deviceID uint) []gm.DeviceShare {
 }
 
 func toPermDevice(d *gm.Device, shares []gm.DeviceShare) *perm.Device {
-	pd := &perm.Device{OrgID: d.OrgID, OwnerUserID: d.UserID}
+	pd := &perm.Device{OrgID: d.OrgID, OwnerUserID: d.UserID, OrgOwned: d.OrgOwned()}
 	for _, sh := range shares {
 		pd.Shares = append(pd.Shares, perm.Share{TargetType: sh.TargetType, TargetID: sh.TargetID, Level: sh.Level})
 	}
@@ -57,7 +90,7 @@ func (s *Svc) deviceScope(c Ctx, q *gorm.DB) *gorm.DB {
 	if perm.IsAdmin(u.Role) || u.Role == gm.RoleViewer {
 		return q
 	}
-	return q.Where(`(peers.user_id = ? OR peers.row_id IN (
+	return q.Where(`(peers.user_id = ? OR (peers.enrolled_at IS NOT NULL AND peers.revoked_at IS NULL) OR peers.row_id IN (
 		SELECT device_id FROM device_shares WHERE org_id = ? AND (
 			(target_type = 'user' AND target_id = ?) OR (target_type = 'group' AND target_id = ?))))`,
 		u.ID, u.OrgID, u.ID, u.GroupID)
@@ -83,6 +116,13 @@ func applyFilter(q *gorm.DB, f DeviceFilter) *gorm.DB {
 	if f.GroupID != nil {
 		q = q.Where("peers.group_id = ?", *f.GroupID)
 	}
+	if f.Enrolled != nil {
+		if *f.Enrolled {
+			q = q.Where("peers.enrolled_at IS NOT NULL")
+		} else {
+			q = q.Where("peers.enrolled_at IS NULL")
+		}
+	}
 	if f.Os != "" {
 		q = q.Where("(lower(peers.os) LIKE ? OR lower(peers.platform) LIKE ?)", "%"+strings.ToLower(f.Os)+"%", "%"+strings.ToLower(f.Os)+"%")
 	}
@@ -101,9 +141,16 @@ func (s *Svc) Devices(c Ctx, f DeviceFilter, p Page) ([]DeviceView, Meta, error)
 	if err := q.Order("peers.last_online_time DESC, peers.row_id").Offset(p.offset()).Limit(p.PerPage).Find(&rows).Error; err != nil {
 		return nil, Meta{}, err
 	}
+	gids := make([]uint, 0, len(rows))
+	for _, d := range rows {
+		gids = append(gids, d.GroupID)
+	}
+	names := s.groupNames(gids)
 	out := make([]DeviceView, 0, len(rows))
 	for _, d := range rows {
-		out = append(out, view(d, nil))
+		v := view(d, nil)
+		v.GroupName = names[d.GroupID]
+		out = append(out, v)
 	}
 	return out, p.meta(total), nil
 }
@@ -154,7 +201,7 @@ func (s *Svc) Device(c Ctx, id uint) (*DeviceView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := view(*d, shares)
+	v := s.viewOf(*d, shares)
 	return &v, nil
 }
 
@@ -200,8 +247,11 @@ func (s *Svc) DeviceUpdate(c Ctx, id uint, in DeviceUpdateInput) (*DeviceView, e
 		}
 		s.Audit(c, d.OrgID, action, "device", id, map[string]interface{}{"rustdesk_id": d.ID})
 	}
-	if in.Name != nil || in.GroupID != nil {
-		s.Audit(c, d.OrgID, "device.update", "device", id, map[string]interface{}{"changes": upd})
+	if in.Name != nil {
+		s.Audit(c, d.OrgID, "device.rename", "device", id, map[string]interface{}{"rustdesk_id": d.ID, "from": d.Alias, "alias": upd["alias"]})
+	}
+	if in.GroupID != nil {
+		s.Audit(c, d.OrgID, "device.move", "device", id, map[string]interface{}{"rustdesk_id": d.ID, "from_group_id": d.GroupID, "group_id": *in.GroupID})
 	}
 	return s.Device(c, id)
 }
@@ -382,7 +432,7 @@ func (s *Svc) Heartbeat(c Ctx, in HeartbeatInput) (*HeartbeatOut, error) {
 		if d.OrgID == 0 {
 			upd["org_id"] = u.OrgID
 		}
-		if d.UserID == 0 {
+		if d.UserID == 0 && d.EnrolledAt == nil { // vinculado por enrollment é da org, não de um usuário
 			upd["user_id"] = u.ID
 		}
 		if in.ID != "" && d.ID != in.ID {
@@ -415,7 +465,7 @@ func (s *Svc) Heartbeat(c Ctx, in HeartbeatInput) (*HeartbeatOut, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &HeartbeatOut{Device: view(*d, nil), HostEnabled: d.HostEnabled, PendingInvites: pend, ServerTime: now}, nil
+	return &HeartbeatOut{Device: s.viewOf(*d, nil), HostEnabled: d.HostEnabled, PendingInvites: pend, ServerTime: now}, nil
 }
 
 // DeviceGroups lista grupos de dispositivos da org.

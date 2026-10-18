@@ -9,20 +9,23 @@ type Action string
 
 // Ações conhecidas.
 const (
-	DeviceView    Action = "device.view"
-	DeviceConnect Action = "device.connect"
-	DeviceManage  Action = "device.manage" // renomear, host on/off, apagar, compartilhar
-	DeviceAdd     Action = "device.add"    // registrar novo dispositivo na org (limite do plano)
-	InviteCreate  Action = "invite.create"
-	InviteManage  Action = "invite.manage" // listar/revogar convites de outros
-	GroupManage   Action = "group.manage"
-	SessionView   Action = "session.view"
-	SessionViewAll Action = "session.view_all"
-	OrgManage     Action = "org.manage" // org, usuários, branding, sso
-	OrgBilling    Action = "org.billing"
-	AuditView     Action = "audit.view"
-	UserAdd       Action = "user.add" // limite de técnicos do plano
-	Ops           Action = "ops"
+	DeviceView       Action = "device.view"
+	DeviceConnect    Action = "device.connect"
+	DeviceManage     Action = "device.manage"         // renomear, host on/off, apagar, compartilhar
+	DeviceAdd        Action = "device.add"            // registrar novo dispositivo na org (limite do plano)
+	DeviceAdminister Action = "device.administer"     // rotacionar senha / revogar vínculo (owner/admin)
+	EnrollKeyView    Action = "enrollment_key.view"   // listar códigos de vínculo (tech lê)
+	EnrollKeyManage  Action = "enrollment_key.manage" // criar/revogar códigos de vínculo (owner/admin)
+	InviteCreate     Action = "invite.create"
+	InviteManage     Action = "invite.manage" // listar/revogar convites de outros
+	GroupManage      Action = "group.manage"
+	SessionView      Action = "session.view"
+	SessionViewAll   Action = "session.view_all"
+	OrgManage        Action = "org.manage" // org, usuários, branding, sso
+	OrgBilling       Action = "org.billing"
+	AuditView        Action = "audit.view"
+	UserAdd          Action = "user.add" // limite de técnicos do plano
+	Ops              Action = "ops"
 )
 
 // Actor é quem age.
@@ -46,6 +49,9 @@ type Device struct {
 	OrgID       uint
 	OwnerUserID uint
 	Shares      []Share
+	// OrgOwned: vinculado por enrollment (user_id = 0, é da org) e não revogado.
+	// Técnicos da org veem e conectam; gerenciar continua owner/admin (ou share manage).
+	OrgOwned bool
 }
 
 // Limits são os limites do plano + uso atual, usados em DeviceAdd/UserAdd.
@@ -103,7 +109,8 @@ func shareLevel(a Actor, d *Device) string {
 //   - ops pode tudo em qualquer org;
 //   - fora da própria org, nada;
 //   - owner/admin: tudo na org (billing só owner/admin);
-//   - tech: conecta/gerencia o que é seu ou foi compartilhado; cria convites; vê suas sessões;
+//   - tech: conecta/gerencia o que é seu ou foi compartilhado; vê e conecta (não gerencia)
+//     nos dispositivos da org vinculados por enrollment; cria convites; lê códigos de vínculo;
 //   - viewer: só leitura (lista de dispositivos e sessões).
 //   - limites do plano valem para DeviceAdd/UserAdd (ops ignora).
 func Can(a Actor, action Action, r Resource) bool {
@@ -134,11 +141,11 @@ func Can(a Actor, action Action, r Resource) bool {
 			return false
 		}
 		return r.Limits == nil || r.Limits.MaxTechs == 0 || r.Limits.Techs < r.Limits.MaxTechs
-	case OrgManage, AuditView, GroupManage, InviteManage, SessionViewAll:
+	case OrgManage, AuditView, GroupManage, InviteManage, SessionViewAll, EnrollKeyManage, DeviceAdminister:
 		return rank >= 3
 	case OrgBilling:
 		return rank >= 3
-	case InviteCreate:
+	case InviteCreate, EnrollKeyView:
 		return rank >= 2
 	case SessionView:
 		return rank >= 1
@@ -146,7 +153,7 @@ func Can(a Actor, action Action, r Resource) bool {
 		if rank >= 3 || rank == 1 {
 			return true
 		}
-		return r.Device == nil || r.Device.OwnerUserID == a.UserID || shareLevel(a, r.Device) != ""
+		return r.Device == nil || r.Device.OrgOwned || r.Device.OwnerUserID == a.UserID || shareLevel(a, r.Device) != ""
 	case DeviceConnect:
 		if rank >= 3 {
 			return true
@@ -154,7 +161,7 @@ func Can(a Actor, action Action, r Resource) bool {
 		if rank < 2 || r.Device == nil {
 			return false
 		}
-		return r.Device.OwnerUserID == a.UserID || shareLevel(a, r.Device) != ""
+		return r.Device.OrgOwned || r.Device.OwnerUserID == a.UserID || shareLevel(a, r.Device) != ""
 	case DeviceManage:
 		if rank >= 3 {
 			return true
