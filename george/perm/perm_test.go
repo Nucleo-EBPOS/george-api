@@ -73,3 +73,37 @@ func TestCanPlanLimits(t *testing.T) {
 		t.Error("viewer não registra device")
 	}
 }
+
+func TestCanOrgOwnedDevices(t *testing.T) {
+	enrolled := &Device{OrgID: 1, OwnerUserID: 0, OrgOwned: true}
+	tech := Actor{UserID: 11, OrgID: 1, Role: gm.RoleTech}
+	viewer := Actor{UserID: 12, OrgID: 1, Role: gm.RoleViewer}
+	admin := Actor{UserID: 2, OrgID: 1, Role: gm.RoleAdmin}
+	outsider := Actor{UserID: 3, OrgID: 2, Role: gm.RoleOwner}
+	cases := []struct {
+		name   string
+		actor  Actor
+		action Action
+		want   bool
+	}{
+		{"tech vê PC da org", tech, DeviceView, true},
+		{"tech conecta em PC da org", tech, DeviceConnect, true},
+		{"tech não gerencia PC da org", tech, DeviceManage, false},
+		{"tech não administra (rotate/revoke)", tech, DeviceAdminister, false},
+		{"viewer vê", viewer, DeviceView, true},
+		{"viewer não conecta", viewer, DeviceConnect, false},
+		{"admin administra", admin, DeviceAdminister, true},
+		{"outra org nada", outsider, DeviceConnect, false},
+	}
+	for _, c := range cases {
+		if got := Can(c.actor, c.action, Resource{OrgID: 1, Device: enrolled}); got != c.want {
+			t.Errorf("%s: Can=%v, esperado %v", c.name, got, c.want)
+		}
+	}
+	if Can(tech, DeviceConnect, Resource{OrgID: 1, Device: &Device{OrgID: 1, OwnerUserID: 0, OrgOwned: false}}) {
+		t.Error("PC revogado/não vinculado sem dono não é conectável por tech")
+	}
+	if !Can(tech, EnrollKeyView, Resource{OrgID: 1}) || Can(tech, EnrollKeyManage, Resource{OrgID: 1}) || !Can(admin, EnrollKeyManage, Resource{OrgID: 1}) || Can(viewer, EnrollKeyView, Resource{OrgID: 1}) {
+		t.Error("códigos de vínculo: tech lê, admin gerencia, viewer nada")
+	}
+}

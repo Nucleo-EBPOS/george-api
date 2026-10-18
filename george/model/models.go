@@ -82,6 +82,17 @@ type Device struct {
 	HostEnabled    bool   `gorm:"column:host_enabled" json:"host_enabled"`
 	LastOnlineTime int64  `gorm:"column:last_online_time" json:"last_seen"`
 	LastOnlineIP   string `gorm:"column:last_online_ip" json:"last_ip"`
+
+	// Enrollment (0006): dispositivo vinculado à org por código de vínculo.
+	EnrolledAt       *time.Time `gorm:"column:enrolled_at" json:"enrolled_at"`
+	EnrollmentKeyID  *uint      `gorm:"column:enrollment_key_id" json:"enrollment_key_id"`
+	DeviceTokenHash  *string    `gorm:"column:device_token_hash" json:"-"`
+	PwEnc            *string    `gorm:"column:pw_enc" json:"-"`
+	PwVersion        int        `gorm:"column:pw_version" json:"password_version"`
+	PwAppliedVersion int        `gorm:"column:pw_applied_version" json:"-"`
+	Unattended       bool       `gorm:"column:unattended" json:"unattended"`
+	RevokedAt        *time.Time `gorm:"column:revoked_at" json:"revoked_at"`
+	LastAgentAt      int64      `gorm:"column:last_agent_at" json:"last_agent_at"`
 }
 
 func (Device) TableName() string { return "peers" }
@@ -97,6 +108,51 @@ func (d Device) Name() string {
 // Online considera visto nos últimos 90s.
 func (d Device) Online() bool {
 	return d.LastOnlineTime > 0 && time.Now().Unix()-d.LastOnlineTime < 90
+}
+
+// Enrolled diz se o dispositivo foi vinculado à org (mesmo que depois revogado).
+func (d Device) Enrolled() bool { return d.EnrolledAt != nil }
+
+// Revoked diz se o vínculo foi revogado.
+func (d Device) Revoked() bool { return d.RevokedAt != nil }
+
+// OrgOwned é o dispositivo da org (vinculado e não revogado): técnicos da org enxergam e conectam.
+func (d Device) OrgOwned() bool { return d.EnrolledAt != nil && d.RevokedAt == nil }
+
+// PasswordApplied diz se o PC já aplicou a versão atual da senha permanente.
+func (d Device) PasswordApplied() bool { return d.PwVersion > 0 && d.PwAppliedVersion >= d.PwVersion }
+
+// HasPassword diz se há senha permanente guardada.
+func (d Device) HasPassword() bool { return d.PwEnc != nil && *d.PwEnc != "" }
+
+// EnrollmentKey é um código de vínculo da org (XXXX-XXXX-XXXX).
+type EnrollmentKey struct {
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	OrgID     uint       `gorm:"column:org_id" json:"org_id"`
+	Code      string     `json:"code"`
+	Label     string     `json:"label"`
+	GroupID   uint       `gorm:"column:group_id" json:"group_id"`
+	MaxUses   int        `json:"max_uses"`
+	Uses      int        `json:"uses"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at"`
+	CreatedBy uint       `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (EnrollmentKey) TableName() string { return "enrollment_keys" }
+
+// Status calcula o estado do código: active|revoked|expired|exhausted.
+func (k EnrollmentKey) Status(now time.Time) string {
+	switch {
+	case k.RevokedAt != nil:
+		return "revoked"
+	case k.ExpiresAt != nil && !now.Before(*k.ExpiresAt):
+		return "expired"
+	case k.MaxUses > 0 && k.Uses >= k.MaxUses:
+		return "exhausted"
+	}
+	return "active"
 }
 
 // DeviceGroup é a visão George de device_groups (mesma tabela).

@@ -74,15 +74,24 @@ Outros: `GET /devices?q=&online=&host_enabled=&group_id=`, `GET /devices/search?
 
 | Ação | owner/admin | tech | viewer |
 |---|---|---|---|
-| ver dispositivos | todos da org | os seus + compartilhados | todos (leitura) |
-| conectar | sim | seus + share `connect`/`manage` | não |
-| gerenciar (nome, host on/off, apagar, compartilhar) | sim | seus + share `manage` | não |
+| ver dispositivos | todos da org | os seus + compartilhados + **PCs vinculados da org** | todos (leitura) |
+| conectar | sim | seus + share `connect`/`manage` + **PCs vinculados da org** (inclui `GET /devices/{id}/credentials`) | não |
+| gerenciar (nome, setor, host on/off, apagar, compartilhar) | sim | seus + share `manage` (PC vinculado: só com share `manage`) | não |
+| PC vinculado: rotacionar senha / revogar vínculo | sim | não | não |
+| códigos de vínculo (`/enrollment-keys`) | criar/listar/revogar | só listar | não |
 | convites | criar/listar todos/revogar | criar (para o que acessa) e os próprios | não |
 | grupos, usuários, branding, SSO, billing, auditoria | sim | não | não |
 | `ops/*` | só `is_ops` (`GEORGE_OPS_EMAILS`) | | |
 
 Limites do plano (`plans.max_devices`, `max_techs`) são aplicados em `device.add`
-(heartbeat de dispositivo novo → `402 plan_limit_reached`) e `user.add`.
+(heartbeat de dispositivo novo → `402 plan_limit_reached`), em `POST /enroll` (PC novo na org) e `user.add`.
+
+**PCs vinculados (enrollment)** têm `user_id = 0` (são da org, não de um usuário). Regra para
+técnicos: enquanto o vínculo está ativo (não revogado), todo `tech` da org **vê e conecta**
+(é o caso de uso da aba "Organização" do cliente); **gerenciar** (renomear/mover/apagar) exige
+owner/admin ou share `manage`; **rotacionar senha e revogar** são só owner/admin. PC revogado
+some da lista dos técnicos (owner/admin continuam vendo, com `revoked: true`). O `/api/sysinfo`
+do upstream não consegue dar dono a um PC vinculado (hook do gorm mantém `user_id = 0`).
 
 ## Convites
 
@@ -91,6 +100,49 @@ sessão gerada na criação, **cifrada (AES-GCM)** e entregue:
 1. ao **host** no `pending_invites` do heartbeat (para aplicar como senha temporária);
 2. ao **convidado** uma única vez em `POST /invites/{code}/consume` (atômico; após o último uso a senha é apagada).
 Expiração, `max_uses`, revogação e consumo são auditados.
+
+## Enrollment de PCs (spec `docs/specs/06-enrollment.md`)
+
+Código de vínculo da org (`XXXX-XXXX-XXXX`, reutilizável até `max_uses`, `0` = ilimitado) →
+o PC chama `POST /enroll` (público, 20/min/IP) → recebe **uma vez** o `device_token`
+(a API guarda só o SHA-256) e a senha permanente (AES-GCM em repouso, versionada) → o agente
+faz `POST /agent/heartbeat` com `Authorization: Device <token>` a cada `heartbeat_interval` s.
+O token de dispositivo **não** vale em nenhuma rota de usuário (`Auth()` só lê `Bearer`), e JWT
+de usuário **não** vale no agente.
+
+```bash
+# admin: cria o código (setor opcional, validade opcional)
+curl -s $API/enrollment-keys -H "$A" -H "$J" -d '{"label":"Notebooks financeiro","group_id":3,"max_uses":0,"expires_in_days":30}'
+#   → data.code "ABCD-EFGH-JKMN", data.url "https://georgedesk.com/e/ABCD-EFGH-JKMN", data.status "active"
+curl -s $API/enrollment-keys -H "$A"                      # tech também lê
+# PC: vincula (sem "password" a API gera 14 chars; com "password" valida mín. 8)
+curl -s $API/enroll -H "$J" -d '{"code":"ABCD-EFGH-JKMN","rustdesk_id":"123456789","uuid":"<base64>","hostname":"NOTE-EB101",
+  "platform":"windows","os":"Windows 11 Pro 23H2","version":"0.2.0","username":"maria"}'
+#   → data.device{id,name,group_id,group_name}, data.org{id,name}, data.device_token, data.password{version,value}, data.heartbeat_interval
+#   erros: 404 enrollment_key_invalid (inexistente/revogado/expirado/esgotado — resposta única),
+#          409 device_other_org, 402 plan_limit_reached, 422 validation_error
+DT="Authorization: Device <device_token>"
+curl -s $API/agent/heartbeat -H "$DT" -H "$J" -d '{"rustdesk_id":"123456789","uuid":"<base64>","hostname":"NOTE-EB101",
+  "os":"Windows 11 Pro 23H2","version":"0.2.0","unattended":true,"password_version":1}'
+#   → data{name,group_name,org_name,password:null|{version,value},heartbeat_interval}; 401 device_token_invalid; 410 device_revoked
+# admin/técnico
+curl -s "$API/devices?enrolled=true" -H "$A"              # + enrolled, enrolled_at, unattended, password_version, password_applied, revoked, last_agent_at, group_name, online
+curl -s -X PATCH $API/devices/42 -H "$A" -H "$J" -d '{"alias":"Maria - Financeiro","group_id":4}'   # audita device.rename / device.move
+curl -s -X POST $API/devices/42/rotate-password -H "$A"   # → data.password_version (PC aplica no próximo heartbeat)
+curl -s $API/devices/42/credentials -H "$A"               # → rustdesk_id, password, password_version, password_applied (auditado)
+curl -s -X POST $API/devices/42/revoke -H "$A"            # 204; agente passa a receber 410 e apaga token+senha
+curl -s -X DELETE $API/enrollment-keys/7 -H "$A"          # 204; PCs já vinculados continuam
+```
+
+- **Re-vínculo** (mesmo `uuid`, mesma org): token novo (o antigo morre), mantém nome/setor/senha
+  e devolve a senha atual em `password.value` (se vier `password` diferente no corpo, vira nova versão).
+  PC revogado pode ser re-vinculado com um código válido (gera senha nova). Todo vínculo bem-sucedido
+  consome 1 uso do código; falhas não consomem.
+- `password_applied` = `password_version > 0 && pw_applied_version >= password_version`
+  (o agente informa a versão aplicada em `password_version` no heartbeat).
+- Revogar mantém o hash do token só para responder `410` ao agente; a senha cifrada é apagada.
+- `/agent/heartbeat` não tem rate-limit por IP (vários PCs atrás do mesmo NAT); autenticado por token.
+- Auditoria: `enrollment_key.create|revoke`, `device.enroll|rename|move|rotate_password|revoke|credentials.read`.
 
 ## Importar o SQLite da produção atual
 

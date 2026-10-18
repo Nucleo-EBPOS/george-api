@@ -127,6 +127,9 @@ func (s *Svc) afterCreate(db *gorm.DB) {
 		}
 	case "peers", "address_books", "tags", "address_book_collections":
 		s.backfillOrg(s.fresh(db), db.Statement.Table)
+		if db.Statement.Table == "peers" {
+			s.keepEnrolledOrgOwned(s.fresh(db))
+		}
 	}
 }
 
@@ -141,6 +144,15 @@ func (s *Svc) afterUpdate(db *gorm.DB) {
 		}
 	case "peers":
 		s.backfillOrg(s.fresh(db), "peers")
+		s.keepEnrolledOrgOwned(s.fresh(db))
+	}
+}
+
+// keepEnrolledOrgOwned garante user_id = 0 em dispositivos vinculados por enrollment
+// (o /api/sysinfo do upstream preenche user_id a partir do login_log).
+func (s *Svc) keepEnrolledOrgOwned(db *gorm.DB) {
+	if err := db.Exec(`UPDATE peers SET user_id = 0 WHERE enrolled_at IS NOT NULL AND user_id <> 0`).Error; err != nil {
+		s.Log.WithError(err).Warn("george: reset user_id de dispositivos vinculados")
 	}
 }
 

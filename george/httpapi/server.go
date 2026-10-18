@@ -62,6 +62,10 @@ func Register(g *gin.Engine, log *logrus.Logger) {
 	v1.GET("/invites/:code", RateLimit(60, time.Minute), hInvitePublic)
 	v1.POST("/invites/:code/consume", RateLimit(10, time.Minute), hInviteConsume)
 
+	// enrollment de PCs (público) e agente do PC vinculado (Authorization: Device <token>)
+	v1.POST("/enroll", RateLimit(20, time.Minute), hEnroll)
+	v1.POST("/agent/heartbeat", DeviceAuth(), hAgentHeartbeat)
+
 	p := v1.Group("", Auth())
 	p.GET("/me", hMe)
 
@@ -72,11 +76,18 @@ func Register(g *gin.Engine, log *logrus.Logger) {
 	p.PATCH("/devices/:id", hDevicePatch)
 	p.DELETE("/devices/:id", hDeviceDelete)
 	p.POST("/devices/:id/share", hDeviceShare)
+	p.POST("/devices/:id/rotate-password", hDeviceRotatePassword)
+	p.POST("/devices/:id/revoke", hDeviceRevoke)
+	p.GET("/devices/:id/credentials", hDeviceCredentials)
 	p.DELETE("/devices/:id/share/:shareId", hDeviceUnshare)
 
 	p.POST("/invites", RateLimit(30, time.Minute), hInviteCreate)
 	p.GET("/invites", hInvites)
 	p.DELETE("/invites/:code", hInviteRevoke)
+
+	p.GET("/enrollment-keys", hEnrollKeys)
+	p.POST("/enrollment-keys", RateLimit(30, time.Minute), hEnrollKeyCreate)
+	p.DELETE("/enrollment-keys/:id", hEnrollKeyRevoke)
 
 	p.GET("/groups", hGroups)
 	p.POST("/groups", hGroupCreate)
@@ -143,7 +154,7 @@ func hOpsHealth(c *gin.Context) {
 	ok(c, http.StatusOK, gin.H{
 		"version": Version, "uptime_s": int(time.Since(startedAt).Seconds()), "go": runtime.Version(),
 		"goroutines": runtime.NumGoroutine(), "heap_mb": m.HeapAlloc / 1024 / 1024,
-		"counts": gin.H{"orgs": orgs, "users": users, "devices": devices, "sessions": sessions, "jobs_pending": service.S.PendingJobs()},
+		"counts":     gin.H{"orgs": orgs, "users": users, "devices": devices, "sessions": sessions, "jobs_pending": service.S.PendingJobs()},
 		"ai_enabled": service.S.AI.Enabled(), "stripe_configured": config.Current.StripeSecretKey != "",
 	})
 }

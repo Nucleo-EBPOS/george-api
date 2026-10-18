@@ -8,7 +8,7 @@ import (
 )
 
 func hDevices(c *gin.Context) {
-	f := service.DeviceFilter{Q: c.Query("q"), Online: queryBool(c, "online"), HostEnabled: queryBool(c, "host_enabled"), GroupID: queryUint(c, "group_id"), Os: c.Query("os")}
+	f := service.DeviceFilter{Q: c.Query("q"), Online: queryBool(c, "online"), HostEnabled: queryBool(c, "host_enabled"), GroupID: queryUint(c, "group_id"), Os: c.Query("os"), Enrolled: queryBool(c, "enrolled")}
 	rows, meta, err := service.S.Devices(ctx(c), f, page(c))
 	if err != nil {
 		fail(c, err)
@@ -51,11 +51,15 @@ func hDevicePatch(c *gin.Context) {
 	}
 	var r struct {
 		Name        *string `json:"name"`
+		Alias       *string `json:"alias"` // sinônimo de name (spec 06)
 		HostEnabled *bool   `json:"host_enabled"`
 		GroupID     *uint   `json:"group_id"`
 	}
 	if !bind(c, &r) {
 		return
+	}
+	if r.Alias != nil {
+		r.Name = r.Alias
 	}
 	d, err := service.S.DeviceUpdate(ctx(c), id, service.DeviceUpdateInput{Name: r.Name, HostEnabled: r.HostEnabled, GroupID: r.GroupID})
 	if err != nil {
