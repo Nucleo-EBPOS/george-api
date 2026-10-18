@@ -98,6 +98,7 @@ var routes = []route{
 	{"get", "/healthz", "Infra", "Saúde do serviço", false, nil, ref("Health"), 200, nil},
 	{"get", "/openapi.json", "Infra", "Este documento", false, nil, obj{"type": "object"}, 200, nil},
 	{"get", "/releases/latest", "Infra", "Manifest da última versão do cliente", false, nil, ref("Release"), 200, nil},
+	{"post", "/releases/latest", "Infra", "Verificação de atualização do cliente (formato RustDesk, sem envelope)", false, obj{"type": "object"}, object(obj{"url": str("página do release")}), 200, nil},
 
 	{"post", "/auth/signup", "Auth", "Cria org + owner", false, object(obj{"email": str(""), "password": str("mín. 10"), "name": str(""), "org_name": str("")}, "email", "password"),
 		object(obj{"tokens": ref("Tokens"), "user": ref("User"), "org": ref("Org")}), 201, nil},

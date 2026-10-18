@@ -45,6 +45,8 @@ func Register(g *gin.Engine, log *logrus.Logger) {
 	v1.GET("/healthz", hHealthz)
 	v1.GET("/openapi.json", func(c *gin.Context) { c.Data(http.StatusOK, "application/json", openapi.JSON(Version, cfg.PublicURL)) })
 	v1.GET("/releases/latest", RateLimit(60, time.Minute), hReleasesLatest)
+	// Verificação de atualização do cliente (formato RustDesk: POST → {"url": "<página do release>"}).
+	v1.POST("/releases/latest", RateLimit(120, time.Minute), hReleasesCheck)
 	v1.POST("/webhooks/stripe", RateLimit(120, time.Minute), hStripeWebhook)
 
 	a := v1.Group("/auth")
@@ -234,20 +236,43 @@ func fetchLatestRelease(repo string) (*releaseManifest, error) {
 	return m, nil
 }
 
-func hReleasesLatest(c *gin.Context) {
+// latestRelease devolve o manifest do último release (cache de 10 min; em falha do
+// GitHub, serve o último conhecido).
+func latestRelease() (*releaseManifest, error) {
 	relCache.Lock()
 	defer relCache.Unlock()
 	if relCache.data == nil || time.Since(relCache.at) > 10*time.Minute {
 		m, err := fetchLatestRelease(config.Current.ReleasesRepo)
 		if err != nil {
 			if relCache.data == nil {
-				fail(c, err)
-				return
+				return nil, err
 			}
 		} else {
 			relCache.data, relCache.at = m, time.Now()
 		}
 	}
+	return relCache.data, nil
+}
+
+func hReleasesLatest(c *gin.Context) {
+	m, err := latestRelease()
+	if err != nil {
+		fail(c, err)
+		return
+	}
 	c.Header("Cache-Control", "public, max-age=300")
-	ok(c, http.StatusOK, relCache.data)
+	ok(c, http.StatusOK, m)
+}
+
+// hReleasesCheck atende o verificador de atualização do cliente (src/common.rs
+// do_check_software_update): POST com {id, uuid, os, arch, ...}; resposta SEM envelope,
+// {"url": "https://github.com/<repo>/releases/tag/vX.Y.Z"}. O cliente compara a tag com a
+// própria versão e baixa os metadados assinados (george-update.json) do release.
+func hReleasesCheck(c *gin.Context) {
+	m, err := latestRelease()
+	if err != nil || m == nil || m.URL == "" {
+		c.JSON(http.StatusOK, gin.H{"url": ""})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": m.URL})
 }
